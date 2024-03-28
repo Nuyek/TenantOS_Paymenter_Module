@@ -8,7 +8,7 @@
 
     - Add ```$this->load(__DIR__ . '/../Extensions/Servers/TenantOS');``` under ```$this->load(__DIR__ . '/Commands');```
 
-    - You can change ->everyFifteenSeconds(); to whatever time you want. I have it set at fiveteen seconds for now since it was just easier for me to test the CRON.
+    - You can change ->everyFifteenSeconds(); to whatever time you want. I have it set at fifteen seconds for now since it was just easier for me to test the CRON.
 
 
 2. **Step Two**
