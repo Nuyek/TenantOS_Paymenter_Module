@@ -8,12 +8,6 @@ use App\Classes\Extensions\Server;
 use App\Helpers\ExtensionHelper;
 
 use App\Models\Product;
-use App\Models\Ticket;
-use App\Models\TicketMessage;
-use App\Models\EmailLog;
-use App\Extensions\Servers\TenantOS\NewDedicatedServerSetup;
-use Illuminate\Support\Facades\Mail;
-
 
 class TenantOS extends Server
 {
@@ -56,7 +50,7 @@ class TenantOS extends Server
         return [
             [
                 'name' => 'host',
-                'friendlyName' => 'TenantOS URL ( Do not have a / on the end )',
+                'friendlyName' => 'TenantOS URL',
                 'type' => 'text',
                 'required' => true,
             ],
@@ -68,44 +62,37 @@ class TenantOS extends Server
             ],
             [
                 'name' => 'accountOwnershipId',
-                'friendlyName' => 'Account that should own the server after suspension ETC..',
+                'friendlyName' => 'Account that should own the server after suspension ( Expects Integer, In TenantOS the default ADMIN account is 1 )',
                 'type' => 'text',
                 'required' => true,
             ],
             [
                 'name' => 'customerAssignedTag',
-                'friendlyName' => 'Tag to set a server when a customer is assigned it ( THIS SHOULD NEVER BE CHANGED IN PRODUCTION !!!!! )',
+                'friendlyName' => 'Tag to set a server when a customer is assigned it',
                 'type' => 'text',
                 'required' => true,
             ],
             [
                 'name' => 'forRentTag',
-                'friendlyName' => 'Tag to decide which servers can be rented/assigned automatically ( THIS SHOULD NEVER BE CHANGED IN PRODUCTION !!!!! )',
+                'friendlyName' => 'Tag to decide which servers can be rented/assigned automatically',
                 'type' => 'text',
                 'required' => true,
             ],
             [
                 'name' => 'postTerminationProvisionProfile',
-                'friendlyName' => 'Provision Profile to run after Termination ( Usually Disk Wipe )',
-                'type' => 'text',
-                'required' => true,
-            ],
-            [
-                'name' => 'apiTokenUrl',
-                'friendlyName' => 'URL for the API Token',
-                'type' => 'text',
-                'required' => true,
-            ],
-            [
-                'name' => 'apiToken',
-                'friendlyName' => 'Billing/Support Area Ticket API Token ( Mainly used to create tickets )',
+                'friendlyName' => 'Provision Profile to run after termination. Like perhaps a Disk Wipe. ( Expects Integer )',
                 'type' => 'text',
                 'required' => true,
             ],
             [
                 'name' => 'deleteUserIfNoOwnedServersAfterTermination',
-                'friendlyName' => 'Deletes the user in TenantOS if they own no servers after a termination.',
+                'friendlyName' => 'Delete the user in TenantOS if they have no assigned servers in TenantOS after Termination',
                 'type' => 'boolean',
+            ],
+            [
+                'name' => 'ssoValidityTime',
+                'friendlyName' => 'How long in seconds the SSO button in the client area is active for. ( Expects Integer, Minimum should be 60 )',
+                'type' => 'text',
             ],
         ];
     }
@@ -208,7 +195,7 @@ class TenantOS extends Server
                 ],
                 [
                     'name' => 'disk_15',
-                    'friendlyName' => 'Disk Fiveteen',
+                    'friendlyName' => 'Disk Fifteen',
                     'type' => 'text',
                 ],
                 [
@@ -231,68 +218,25 @@ class TenantOS extends Server
      */
     public function createServer($user, $params, $order, $orderProduct, $configurableOptions)
     {
-        if (isset($params['config']['server_id'])) {
-            if (!empty($params['config']['server_id'])) {
-                ExtensionHelper::debug('TenantOS', 'Trying to assign/create server for ' . $user->email . ' but already has an assigned server_id of ' . $params['config']['server_id']);
-                return false;
-            }
-        }
-        $doesUserExist = $this->DoesUserExist($user);
-        $foundUser = null;
-        if ($doesUserExist) {
-            $foundUser = $this->FindUser($user);
-        } else {
-
-            $sanitized = preg_replace('/[^a-zA-Z0-9.]/', '', strtolower($user->first_name . '.' . $user->last_name));
-            $json = [
-                'name' => $user->first_name . " " . $user->last_name,
-                'username' => $sanitized . $user->id . $this->generateRandomString(),
-                'password' => $this->generateRandomString(12),
-                'email' => $user->email,
-                'role_id' => 3,
-            ];
-
-            $createUserResponse = $this->postRequest($this->config('host') . '/api/users', $json);
-            if (!$createUserResponse->successful()) {
-                ExtensionHelper::error('TenantOS', 'Failure to create user');
-                return false;
-            }
-
-            $foundUser = json_decode($createUserResponse->getBody()->getContents())->result;
-        }
-
-        if ($doesUserExist == false) {
-            ExtensionHelper::error('TenantOS', 'Should never reach this point without a user.');
+        if (!empty($params['config']['server_id'])) {
+            ExtensionHelper::debug('TenantOS', 'Trying to assign/create server for ' . $user->email . ' but already has an assigned server_id of ' . $params['config']['server_id']);
             return false;
         }
+        
+        $foundUser = $this->findOrCreateUser($user);
 
-        $foundServer = $this->FindServerWithSpecs($params, $configurableOptions, $orderProduct);
+        if (!isset($foundUser)) {
+
+            ExtensionHelper::error('TenantOS', 'Failed to create or find user ' . $user->email);
+            return false;
+            
+        }
+
+        $foundServer = $this->findServerWithSpecs($params, $configurableOptions, $orderProduct);
 
         if ($foundServer == null) {
 
-            /*
-            $mail = new NewDedicatedServerSetup($user, $order, $orderProduct);
-            $emailLog = EmailLog::create([
-                'user_id' => $user->id,
-                'body' => $mail->render(),
-                'subject' => $mail->subject,
-                'body_text' => $mail->textView,
-            ]);
-            try {
-                Mail::to($user->email)->queue($mail);
-            } catch (\Exception $e) {
-                Log::error($e->getMessage());
-                $emailLog->update([
-                    'errors' => (string) $e,
-                    'success' => false,
-                ]);
-            }*/
-
-
-            ExtensionHelper::error('TenantOS', 'Failure to find server for ' . $user->email);
-
-            $message = "Hello, our system has failed to automatically provision your server from order " . $order->id . ". Most likely it wasn't able to find an available server with your selected configuration. We should have it up within a few hours to replace the parts needed. In rare occasions we will need to order additional parts.";
-            //$this->CreateTicket($user, $order, "Automatic Provision failed for Server", $message, "high");
+            ExtensionHelper::error('TenantOS', 'Failed to find server for ' . $user->email);
             return false;
         }
 
@@ -304,16 +248,16 @@ class TenantOS extends Server
         $updatedServerResponse = $this->putRequest($this->config('host') . '/api/servers/' . $foundServer->id, $json);
 
         if (!$updatedServerResponse->successful()) {
-            ExtensionHelper::debug('TenantOS', 'Failure to update found server ' . $foundServer->id . ' for new client ' . $user->email);
+            ExtensionHelper::error('TenantOS', 'Failure to update the found server ' . $foundServer->id . ' for client ' . $user->email);
             return false;
         }
+
         ExtensionHelper::setOrderProductConfig('server_id', $foundServer->id, $orderProduct->id);
-        ExtensionHelper::error('TenantOS', 'Found Server');
         $this->UpdateStock($orderProduct->product_id, $params, $configurableOptions);
         return true;
     }
 
-    private function UpdateStock($productId, $params, $configurableOptions)
+    private function updateStock($productId, $params, $configurableOptions)
     {
         $json = [
             'tags' => [$this->config('forRentTag')],
@@ -425,24 +369,7 @@ class TenantOS extends Server
         $productForStock->stock = $serverCounter;
         $productForStock->save();
     }
-    private function CreateTicket($user, $order, $title, $message, $priority)
-    {
-        $ticket = Ticket::create([
-            'title' => $title,
-            'priority' => $priority,
-            'user_id' => $user->id,
-            'order_id' => $order->id,
-            'status' => 'open',
-        ]);
-
-        TicketMessage::create([
-            'ticket_id' => $ticket->id,
-            'message' => $message,
-            'user_id' => 1,
-        ]);
-
-    }
-    private function FindServerWithSpecs($params, $configurableOptions, $orderProduct)
+    private function findServerWithSpecs($params, $configurableOptions, $orderProduct)
     {
 
         $json = [
@@ -453,9 +380,10 @@ class TenantOS extends Server
         $servers = $this->postRequest($this->config('host') . '/api/servers/getByTags', $json);
 
         if (!$servers->successful()) {
-            ExtensionHelper::error('TenantOS', 'Unable to fetch servers for finding servers');
+            ExtensionHelper::error('TenantOS', 'Unable to fetch servers');
             return null;
         }
+
         $servers = json_decode($servers->getBody()->getContents())->result;
         if (isset($servers) && is_array($servers)) {
             foreach ($servers as $server) {
@@ -557,7 +485,7 @@ class TenantOS extends Server
         }
     }
 
-    private function FindUser($userData)
+    private function findOrCreateUser($userData)
     {
         $users = $this->getRequest($this->config('host') . "/api/users");
 
@@ -571,22 +499,28 @@ class TenantOS extends Server
                 return $user;
             }
         }
-        return null;
-    }
-    private function DoesUserExist($userData): bool
-    {
-        $users = $this->getRequest($this->config('host') . '/api/users');
-        if (!$users->successful()) {
+
+
+        $sanitized = preg_replace('/[^a-zA-Z0-9.]/', '', strtolower($userData->first_name . '.' . $userData->last_name));
+        $json = [
+            'name' => $userData->first_name . " " . $userData->last_name,
+            'username' => $sanitized . $userData->id . $this->generateRandomString(),
+            'password' => $this->generateRandomString(12),
+            'email' => $userData->email,
+            'role_id' => 3,
+        ];
+
+        $createUserResponse = $this->postRequest($this->config('host') . '/api/users', $json);
+
+        if (!$createUserResponse->successful()) {
+            ExtensionHelper::error('TenantOS', 'Failed to find and create user ' . $userData->email);
             return false;
         }
-        $users = json_decode($users->getBody()->getContents())->result;
-        foreach ($users as $user) {
-            if ($user->email === $userData->email) {
-                return true;
-            }
-        }
-        return false;
+
+        return json_decode($createUserResponse->getBody()->getContents())->result;
+
     }
+
     /**
      * Suspend a server
      * 
@@ -599,14 +533,11 @@ class TenantOS extends Server
      */
     public function suspendServer($user, $params, $order, $orderProduct, $configurableOptions)
     {
-        if (!isset($params['config']['server_id'])) {
+        if (empty($params['config']['server_id'] ?? '')) {
             ExtensionHelper::error('TenantOS', 'Trying to upgrade server but server_id is not set');
             return false;
         }
-        if (empty($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to upgrade server but server_id is empty');
-            return false;
-        }
+
         $serverId = $params['config']['server_id'];
         $server = $this->getRequest($this->config('host') . '/api/servers/' . $serverId);
 
@@ -644,14 +575,11 @@ class TenantOS extends Server
      */
     public function unsuspendServer($user, $params, $order, $orderProduct, $configurableOptions)
     {
-        if (!isset($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to  upgrade server but server_id is not set');
+        if (empty($params['config']['server_id'] ?? '')) {
+            ExtensionHelper::debug('TenantOS', 'Trying to upgrade server but server_id is not set');
             return false;
         }
-        if (empty($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to upgrade server but server_id is empty');
-            return false;
-        }
+
         $serverId = $params['config']['server_id'];
 
         $json = [
@@ -674,12 +602,8 @@ class TenantOS extends Server
     }
     public function upgradeServer($user, $params, $order, $orderProduct, $configurableOptions)
     {
-        if (!isset($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to  upgrade server but server_id is not set');
-            return false;
-        }
-        if (empty($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to upgrade server but server_id is empty');
+        if (empty($params['config']['server_id'] ?? '')) {
+            ExtensionHelper::debug('TenantOS', 'Trying to upgrade server but server_id is not set');
             return false;
         }
 
@@ -697,12 +621,9 @@ class TenantOS extends Server
      */
     public function terminateServer($user, $params, $order, $orderProduct, $configurableOptions)
     {
-        if (!isset($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to terminate server but server_id is not set');
-            return false;
-        }
-        if (empty($params['config']['server_id'])) {
-            ExtensionHelper::error('TenantOS', 'Trying to terminate server but server_id is empty');
+
+        if (empty($params['config']['server_id'] ?? '')) {
+            ExtensionHelper::debug('TenantOS', 'Trying to terminate server but server_id is not set');
             return false;
         }
 
@@ -755,7 +676,7 @@ class TenantOS extends Server
             }
         }
 
-        $this->UpdateStock($orderProduct->product_id, $params, $configurableOptions);
+        $this->updateStock($orderProduct->product_id, $params, $configurableOptions);
         return true;
     }
 
@@ -794,37 +715,37 @@ class TenantOS extends Server
         }
 
 
-        $data = new \stdClass();
-        $data->sso = '';
-        $data->ipAssignments = $server->ipassignments;
+        $clientSideData = new \stdClass();
+        $clientSideData->sso = '';
+        $clientSideData->ipAssignments = $server->ipassignments;
         //Just in case something ever happens we can only login as a reseller/user role?
         if ($userData->role_id == 3 || $userData->role_id == 2 && $userData->id != 1 && $userData->id != 2) {
 
 
-            $validForSeconds = 60; //Time SSO is valid for.
+            $validForSeconds = $this->config('ssoValidityTime');
 
             $json = [
                 'endpoint' => '/servers',
                 'validForSeconds' => $validForSeconds
             ];
 
-            $userSSOToken = $this->postRequest($this->config('host') . '/api/users/' . $server->user_id . '/generateSsoToken', $json);
-            $userSSOToken = json_decode($userSSOToken->getBody()->getContents())->result;
+            $ssoRequest = $this->postRequest($this->config('host') . '/api/users/' . $server->user_id . '/generateSsoToken', $json);
+            $ssoRequest = json_decode($ssoRequest->getBody()->getContents())->result;
 
 
-            $data->sso = $this->config('host') . '/tokenLogin/' . $userSSOToken->authToken;
-            $data->validForSeconds = $validForSeconds;
+            $clientSideData->sso = $this->config('host') . '/tokenLogin/' . $ssoRequest->authToken;
+            $clientSideData->validForSeconds = $validForSeconds;
         }
-        $data->servername = $server->servername;
-        $data->hostname = $server->hostname;
+        $clientSideData->servername = $server->servername;
+        $clientSideData->hostname = $server->hostname;
 
 
         return [
             'name' => 'TenantOS',
             'template' => 'tenantos::control',
             'data' => [
-                'details' => (object) json_encode($data),
-            ],
+                    'details' => (object) json_encode($clientSideData),
+                ],
         ];
     }
     private function postRequest($url, $data): \GuzzleHttp\Promise\PromiseInterface|\Illuminate\Http\Client\Response
@@ -870,5 +791,5 @@ class TenantOS extends Server
             'Content-Type' => 'application/json',
         ])->put($url, $data);
     }
-    
+
 }

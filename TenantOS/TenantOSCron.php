@@ -85,23 +85,27 @@ class TenantOSCron extends Command
 
             $serverCounter = 0;
             $cpuModel = \App\Models\ProductSetting::where('product_id', $product->id)->where('name', 'CPU')->first()->value ?? null;
-
             if($cpuModel == null)
                 continue;
 
             $shouldStockCheckConfigOptions = \App\Models\ProductSetting::where('product_id', $product->id)->where('name', 'StockCheckConfigOptions')->first()->value ?? null;
 
-            if($shouldStockCheckConfigOptions == null)
-                continue;
+            // I dont know why checking this for null breaks it. Should be false?
+            //if($shouldStockCheckConfigOptions == null)
+             //   continue;
             
+
+
             if (isset($servers) && is_array($servers)) {
                 foreach ($servers as $server) {
                     if(!isset($server->detailedHardwareInformation) || $server->detailedHardwareInformation == null)
                         continue;
 
                     if (strcmp($server->detailedHardwareInformation->cpu->model, $cpuModel) === 0) {
+
                         if ($server->reinstallationRunning || $server->diskwipeRunning)
                             continue;
+
                         if ($shouldStockCheckConfigOptions) {
                             $ram = \App\Models\ProductSetting::where('product_id', $product->id)->where('name', 'RAM')->first()->value;
 
@@ -185,7 +189,8 @@ class TenantOSCron extends Command
                 $product->stock = $serverCounter;
                 $product->save();
             }
-            ExtensionHelper::debug('TenantOS Cron', 'Cron ran to update stock for TenantOS products');
+            
+            //ExtensionHelper::debug('TenantOS Cron', 'Cron ran to update stock for TenantOS products');
         }
     }
 
